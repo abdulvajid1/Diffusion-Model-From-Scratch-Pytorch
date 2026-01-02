@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from torch import optim
 from tqdm import tqdm
 import logging
-from torch.utils.tensorboard import SummaryWriter
+
 import torch.nn.functional as F
 
 # output_size = ⌊ (input_size − kernel_size + 2 × padding) / stride ⌋ + 1
@@ -37,7 +37,7 @@ class Diffusion(nn.Module):
         return sqrt_alpha_hat * x + one_minus_sqrt_alpha_hat * noise, noise
     
     def sample_timesteps(self, n):
-        torch.randint(low=1, high=self.noise_steps, size=(n, ))
+        return torch.randint(low=1, high=self.noise_steps, size=(n, ))
 
     def sample(self, model, n):
         logging.info(f"Sampling {n} new images....")
@@ -82,12 +82,12 @@ class UNET(nn.Module):
 
         self.bot1 = DoubleConv(256, 512)
         self.bot2 = DoubleConv(512, 512)
-        self.bot3 = DoubleConv(256, 256)
+        self.bot3 = DoubleConv(512, 256)
 
-        self.up1 = Up(512, 128)
+        self.up1 = Up(512, 128) # 512 cuz we have 256 skip connection
         self.sa4 = SelfAttention(128, 16)
 
-        self.up2 = Up(256, 64)
+        self.up2 = Up(256, 64) # 126 skip
         self.sa5 = SelfAttention(64, 32)
 
         self.up3 = Up(128, 64)
@@ -143,7 +143,7 @@ class DoubleConv(nn.Module):
             nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=3, padding=1, bias=False),
             nn.GroupNorm(1, out_ch),
             nn.GELU(),
-            nn.Conv2d(in_channels=out_ch, out_channels=out_ch, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels=out_ch, out_channels=out_ch, kernel_size=3, padding=1, bias=False),
             nn.GroupNorm(1, out_ch)
         )
 
@@ -158,8 +158,8 @@ class Down(nn.Module):
         super().__init__()
         self.max_pool = nn.Sequential(
             nn.MaxPool2d(2),
-            DoubleConv(in_ch=in_channels, out_ch=out_channels, residual=True),
-            DoubleConv(in_ch=out_channels, out_ch=out_channels)
+            DoubleConv(in_ch=in_channels, out_ch=in_channels, residual=True),
+            DoubleConv(in_ch=in_channels, out_ch=out_channels, residual=False)
             )
         
         self.embed_layer = nn.Sequential( # a projection Layer to feature maps dim , [b, embed_dim] -> [b, channels_dim] so each channel will get scalar pos info
@@ -210,7 +210,7 @@ class SelfAttention(nn.Module):
     def forward(self, x: torch.Tensor):
         x = x.view(-1, self.channel_dim, self.size * self.size).transpose(1, 2) # num, channel, siz*siz -> num, siz*siz, channel
         norm_x = self.norm(x)
-        attn_x = self.mha(norm_x, norm_x, norm_x)
+        attn_x, _= self.mha(norm_x, norm_x, norm_x)
         attn_x = attn_x + x
         x = self.final_layer(x) + attn_x
         return x.transpose(1, 2).contiguous().view(-1, self.channel_dim, self.size, self.size)
