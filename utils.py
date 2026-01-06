@@ -27,8 +27,32 @@ def get_data(args):
         torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
     ])
     dataset = torchvision.datasets.ImageFolder(args.dataset_path, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=2)
     return dataloader
+
+def save_model(model, optimizer, global_step, run_name):
+    obj = {
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "global_step": global_step
+    }
+
+    torch.save(obj, os.path.join("models", run_name, f"model_{global_step}.ckpt"))
+    
+
+def load_model(model, optimizer, global_step, args):
+    checkpoint = torch.load(os.path.join('models', args.run_name, f"model_{global_step}.ckpt"), map_location=args.device)
+
+    model.load_state_dict(checkpoint["model"])
+
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint["optimizer"])
+
+    global_step = checkpoint.get("global_step", 0)
+
+    print(f"Model loaded from model_{global_step}.ckpt (step {global_step})")
+
+    return global_step
 
 def setup_logging(run_name):
     os.makedirs('models', exist_ok=True)

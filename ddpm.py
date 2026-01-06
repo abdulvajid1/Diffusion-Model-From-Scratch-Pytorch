@@ -50,12 +50,15 @@ class Diffusion(nn.Module):
                 alpha = self.alpha[t][:, None, None, None]
                 alpha_hat = self.alpha_hat[t][:, None, None, None]
                 beta = self.beta[t][:, None, None, None]
-                if t > 1:
+                if i > 1:
                     additional_noise = torch.randn_like(x)
                 else:
                     additional_noise = torch.zeros_like(x)
 
-                x = (1 / torch.sqrt(alpha)) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat) * predicted_noise))) + torch.sqrt(self.beta) * additional_noise
+                x = (1 / torch.sqrt(alpha)) * (
+        x - (1 - alpha) / torch.sqrt(1 - alpha_hat) * predicted_noise
+    ) + torch.sqrt(beta) * additional_noise
+
         
         model.train()
         x = (x.clamp(-1, 1) + 1)/2
@@ -163,8 +166,8 @@ class Down(nn.Module):
             )
         
         self.embed_layer = nn.Sequential( # a projection Layer to feature maps dim , [b, embed_dim] -> [b, channels_dim] so each channel will get scalar pos info
+            nn.Linear(emb_dim, out_channels),
             nn.SiLU(),
-            nn.Linear(emb_dim, out_channels)
         )
 
     def forward(self, x, t):
@@ -199,7 +202,7 @@ class SelfAttention(nn.Module):
         self.size = size
         self.channel_dim = channel_dim 
         self.mha = nn.MultiheadAttention(channel_dim, num_heads=4)
-        self.norm = nn.RMSNorm([channel_dim])
+        self.norm = nn.LayerNorm([channel_dim])
         self.final_layer = nn.Sequential(
             nn.LayerNorm([channel_dim]),
             nn.Linear(channel_dim, channel_dim),
@@ -212,7 +215,7 @@ class SelfAttention(nn.Module):
         norm_x = self.norm(x)
         attn_x, _= self.mha(norm_x, norm_x, norm_x)
         attn_x = attn_x + x
-        x = self.final_layer(x) + attn_x
+        x = self.final_layer(attn_x) + attn_x
         return x.transpose(1, 2).contiguous().view(-1, self.channel_dim, self.size, self.size)
 
 
