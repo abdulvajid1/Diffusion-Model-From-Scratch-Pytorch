@@ -30,6 +30,6 @@ This repository focuses on:
 
 
 ## Examples
-![alt text](relative/path/to/image.png)
+![alt text](/examples/140993.jpg)
 ![alt text](relative/path/to/image.png)
 ![alt text](relative/path/to/image.png)
