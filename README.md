@@ -20,7 +20,6 @@ This repository focuses on:
 ---
 
 ## 📂 Project Structure
-.
 ├── ddpm.py # Core diffusion process (forward + reverse)
 ├── train.py # Training loop
 ├── utils.py # Helper functions (noise schedule, sampling, etc.)
