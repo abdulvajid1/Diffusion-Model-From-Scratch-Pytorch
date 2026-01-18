@@ -39,16 +39,16 @@ class Diffusion(nn.Module):
     def beta_schedule(self):
         return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
     
-    def cosine_beta_schedule(timesteps, s=0.008):
-        """
-        cosine schedule as proposed in https://arxiv.org/abs/2102.09672
-        """
-        steps = timesteps + 1
-        x = torch.linspace(0, timesteps, steps)
-        alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
-        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-        return torch.clip(betas, 0.0001, 0.9999)
+    # def beta_schedule(self, s=0.008):
+    #     """
+    #     cosine schedule as proposed in https://arxiv.org/abs/2102.09672
+    #     """
+    #     steps = self.noise_steps + 1
+    #     x = torch.linspace(0, self.noise_steps, steps)
+    #     alphas_cumprod = torch.cos(((x / self.noise_steps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    #     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    #     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    #     return torch.clip(betas, 0.0001, 0.9999)
 
     def forward_diffusion_sample(self, x, t):
         sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])[:, None, None, None] # unsqueezing to match same shape as image so it will broadcast

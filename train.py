@@ -92,7 +92,7 @@ def launch():
     args.epochs = 500
     args.batch_size = 16
     args.img_size = 128
-    args.dataset_path = "dataset/cars"
+    args.dataset_path = "dataset/flower_train"
     args.device = 'cuda'
     args.lr = 2e-4
     args.load_model = False
