@@ -5,8 +5,11 @@ import matplotlib.pyplot as plt
 from torch import optim
 from tqdm import tqdm
 import logging
+import math
 
 import torch.nn.functional as F
+
+torch.set_float32_matmul_precision('high')
 
 # output_size = ⌊ (input_size − kernel_size + 2 × padding) / stride ⌋ + 1
 # max pool out  = H_out = ⌊ (H − 2) / 2 ⌋ + 1
@@ -14,6 +17,12 @@ import torch.nn.functional as F
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s",
                     level=logging.INFO, 
                     datefmt="%I: %M: %S")
+
+import torch
+import torch.nn as nn
+import math
+from tqdm import tqdm
+import logging
 
 class Diffusion(nn.Module):
     def __init__(self, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=64, device='cuda'):
@@ -23,13 +32,24 @@ class Diffusion(nn.Module):
         self.img_size = img_size
         self.device = device
 
-        self.beta = self.linear_beta_schedule().to(self.device)
+        self.beta = self.beta_schedule().to(self.device)
         self.alpha = 1. - self.beta
         self.alpha_hat = torch.cumprod(self.alpha, dim=0)
     
-    def linear_beta_schedule(self):
+    def beta_schedule(self):
         return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
     
+    def cosine_beta_schedule(timesteps, s=0.008):
+        """
+        cosine schedule as proposed in https://arxiv.org/abs/2102.09672
+        """
+        steps = timesteps + 1
+        x = torch.linspace(0, timesteps, steps)
+        alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        return torch.clip(betas, 0.0001, 0.9999)
+
     def forward_diffusion_sample(self, x, t):
         sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])[:, None, None, None] # unsqueezing to match same shape as image so it will broadcast
         one_minus_sqrt_alpha_hat = torch.sqrt(1 - self.alpha_hat[t])[:, None, None, None]
@@ -64,9 +84,22 @@ class Diffusion(nn.Module):
         x = (x.clamp(-1, 1) + 1)/2
         x = (x*255).type(torch.uint8)
         return x
+    
+    # def beta_schedule(self, s=0.008):
+    #     steps = self.noise_steps + 1
+    #     t = torch.linspace(0, self.noise_steps, steps)
+
+    #     alpha_hat = torch.cos(
+    #         ((t / self.noise_steps) + s) / (1 + s) * math.pi / 2
+    #     ) ** 2
+
+    #     alpha_hat = alpha_hat / alpha_hat[0]  # normalize
+
+    #     beta = 1 - (alpha_hat[1:] / alpha_hat[:-1])
+    #     return torch.clamp(beta, min=1e-4, max=0.999)
 
 
-class UNET(nn.Module):
+class UNet(nn.Module):
     def __init__(self, c_in=3, c_out=3, time_dim=256, device='cuda') -> None:
         super().__init__()
         self.device = device
@@ -75,26 +108,26 @@ class UNET(nn.Module):
         self.inc = DoubleConv(c_in, 64)
 
         self.down1 = Down(64, 128)
-        self.sa1 = SelfAttention(128, 32)
+        self.sa1 = SelfAttention(128)
 
         self.down2 = Down(128, 256)
-        self.sa2 = SelfAttention(256, 16)
+        self.sa2 = SelfAttention(256)
 
         self.down3 = Down(256, 256)
-        self.sa3 = SelfAttention(256, 8)
+        self.sa3 = SelfAttention(256)
 
         self.bot1 = DoubleConv(256, 512)
         self.bot2 = DoubleConv(512, 512)
         self.bot3 = DoubleConv(512, 256)
 
         self.up1 = Up(512, 128) # 512 cuz we have 256 skip connection
-        self.sa4 = SelfAttention(128, 16)
+        self.sa4 = SelfAttention(128)
 
         self.up2 = Up(256, 64) # 126 skip
-        self.sa5 = SelfAttention(64, 32)
+        self.sa5 = SelfAttention(64)
 
         self.up3 = Up(128, 64)
-        self.sa6 = SelfAttention(64, 64)
+        self.sa6 = SelfAttention(64)
 
         self.outc = nn.Conv2d(64, c_out, kernel_size=1) # 1x1
 
@@ -110,9 +143,10 @@ class UNET(nn.Module):
         t = t.float().unsqueeze(-1)
         t_emb = self.pos_encoding(t, self.time_dim)
 
-        x1 = self.inc(x) # (b, 3, 64, 64) -> (b, 3, 64, 64)
+        x1 = self.inc(x) # (b, 3, 64, 64) -> (b, 64, 64, 64)
 
         x2 = self.down1(x1, t_emb) # 64 -> 32
+
         x2 = self.sa1(x2) # 32 -> 32
 
         x3 = self.down2(x2, t_emb) # 32 -> 16
@@ -121,20 +155,26 @@ class UNET(nn.Module):
         x4 = self.down3(x3, t_emb) # 16 -> 8
         x4 = self.sa3(x4) # 8 -> 8
 
+
         x4 = self.bot1(x4) # 8
         x4 = self.bot2(x4) # 8
-        x4 = self.bot3(x4) # 8
+
+        x4 = self.bot3(x4) 
 
         x = self.up1(x4, x3, t_emb) # 8 -> 16
-        x = self.sa4(x) # 16
+        x = self.sa4(x) 
+
 
         x = self.up2(x, x2, t_emb) # 16 -> 32
         x = self.sa5(x) # 32
 
+
         x = self.up3(x, x1, t_emb) # 32 -> 64
         x = self.sa6(x) # 64
 
+
         output = self.outc(x) # 1x1
+
         return output
     
 
@@ -144,10 +184,10 @@ class DoubleConv(nn.Module):
         self.residual = residual
         self.double_conv = nn.Sequential(
             nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(1, out_ch),
+            nn.GroupNorm(2, out_ch),
             nn.GELU(),
             nn.Conv2d(in_channels=out_ch, out_channels=out_ch, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(1, out_ch)
+            nn.GroupNorm(2, out_ch)
         )
 
     def forward(self, x):
@@ -161,6 +201,7 @@ class Down(nn.Module):
         super().__init__()
         self.max_pool = nn.Sequential(
             nn.MaxPool2d(2),
+            DoubleConv(in_ch=in_channels, out_ch=in_channels, residual=True),
             DoubleConv(in_ch=in_channels, out_ch=in_channels, residual=True),
             DoubleConv(in_ch=in_channels, out_ch=out_channels, residual=False)
             )
@@ -182,6 +223,7 @@ class Up(nn.Module):
         self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
 
         self.conv = nn.Sequential(
+            DoubleConv(in_ch=in_channel, out_ch=in_channel),
             DoubleConv(in_ch=in_channel, out_ch=out_channel),
             DoubleConv(in_ch=out_channel, out_ch=out_channel)
         )
@@ -197,26 +239,28 @@ class Up(nn.Module):
     
 
 class SelfAttention(nn.Module):
-    def __init__(self, channel_dim, size) -> None:
+    def __init__(self, channel_dim) -> None:
         super().__init__()
-        self.size = size
+        # self.size = size
         self.channel_dim = channel_dim 
         self.mha = nn.MultiheadAttention(channel_dim, num_heads=4)
-        self.norm = nn.LayerNorm([channel_dim])
+        self.norm = nn.LayerNorm(channel_dim)
         self.final_layer = nn.Sequential(
-            nn.LayerNorm([channel_dim]),
+            nn.LayerNorm(channel_dim),
             nn.Linear(channel_dim, channel_dim),
+            nn.LayerNorm(channel_dim),
             nn.GELU(),
             nn.Linear(channel_dim, channel_dim)
         )
 
     def forward(self, x: torch.Tensor):
-        x = x.view(-1, self.channel_dim, self.size * self.size).transpose(1, 2) # num, channel, siz*siz -> num, siz*siz, channel
+        size = x.shape[-1]
+        x = x.view(-1, self.channel_dim, size * size).transpose(1, 2) # num, channel, siz*siz -> num, siz*siz, channel
         norm_x = self.norm(x)
         attn_x, _= self.mha(norm_x, norm_x, norm_x)
         attn_x = attn_x + x
         x = self.final_layer(attn_x) + attn_x
-        return x.transpose(1, 2).contiguous().view(-1, self.channel_dim, self.size, self.size)
+        return x.transpose(1, 2).contiguous().view(-1, self.channel_dim, size, size)
 
 
 

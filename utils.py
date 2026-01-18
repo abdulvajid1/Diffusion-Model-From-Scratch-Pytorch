@@ -23,11 +23,12 @@ def get_data(args):
     transform = torchvision.transforms.Compose([
         torchvision.transforms.Resize(80),
         torchvision.transforms.RandomResizedCrop(args.img_size, scale=(0.8, 1.0)),
+        torchvision.transforms.RandomHorizontalFlip(),
         torchvision.transforms.ToTensor(),
         torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
     ])
     dataset = torchvision.datasets.ImageFolder(args.dataset_path, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True, num_workers=6)
     return dataloader
 
 def save_model(model, optimizer, global_step, run_name):
